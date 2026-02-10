@@ -19,10 +19,9 @@ TOTAL_TIME = 30 * 60
 NUM_SITES = 3
 PENALTY = 20
 
-ALL_ATTRIBUTES = [
-    "Permeability", "Rigidity", "Size", "Energy",
-    "Adhesion", "Speed", "Density", "Mobility", "Fluidity"
-]
+# The 3 attributes are ALWAYS the same across all sites — only ranges differ
+FIXED_ATTRIBUTES = ["Permeability", "Mobility", "Energy"]
+
 ALL_TRAITS = [
     "Heat-resistant", "Aerobic", "Hydrophilic", "Bioluminescent",
     "Acidophilic", "UV-tolerant", "Phosphorus-removing",
@@ -42,16 +41,17 @@ ICONS = ["🦠", "🧫", "🔬", "💊", "🧬", "⚗️", "🫧", "🌀", "💠
 class Microbe:
     name: str
     icon: str
-    attributes: Dict[str, int]
-    trait: str
+    attributes: Dict[str, int]   # always Permeability, Mobility, Energy
+    trait: str                    # exactly 1 trait (desired, undesired, or neutral)
 
 @dataclass
 class SiteReqs:
     site_num: int
-    attr_names: List[str]
-    attr_ranges: Dict[str, Tuple[int, int]]
+    attr_names: List[str]                   # always FIXED_ATTRIBUTES
+    attr_ranges: Dict[str, Tuple[int, int]] # different ranges per site
     desired_trait: str
     undesired_trait: str
+    neutral_trait: str
 
 
 # ─── GENERATION ────────────────────────────────────────────────────────────────
@@ -67,53 +67,50 @@ def make_name() -> str:
     return f"M-{random.randint(1000, 9999)}"
 
 
-def make_microbe(attr_names, desired, undesired) -> Microbe:
-    attrs = {a: random.randint(1, 10) for a in attr_names}
-    # Every microbe always has exactly 1 trait
-    other = [t for t in ALL_TRAITS if t not in (desired, undesired)]
+def make_microbe(desired, undesired, neutral) -> Microbe:
+    attrs = {a: random.randint(1, 10) for a in FIXED_ATTRIBUTES}
+    # Every microbe has exactly 1 trait among the 3 possible for this site
     r = random.random()
     if r < 0.35:
         trait = desired
     elif r < 0.50:
         trait = undesired
     else:
-        trait = random.choice(other)
+        trait = neutral
     return Microbe(name=make_name(), icon=random.choice(ICONS),
                    attributes=attrs, trait=trait)
 
 
-def make_site(num, used_attrs, used_traits) -> SiteReqs:
-    avail_a = [a for a in ALL_ATTRIBUTES if a not in used_attrs]
-    if len(avail_a) < 3:
-        avail_a = ALL_ATTRIBUTES.copy()
-    attrs = random.sample(avail_a, 3)
-    used_attrs.update(attrs)
+def make_site(num, used_traits) -> SiteReqs:
+    # Same 3 attributes always, different ranges per site
     ranges = {}
-    for a in attrs:
+    for a in FIXED_ATTRIBUTES:
         lo = random.randint(1, 8)
         hi = lo + 2
         if hi > 10:
             lo, hi = 8, 10
         ranges[a] = (lo, hi)
+    # 3 traits per site: desired, undesired, neutral
     avail_t = [t for t in ALL_TRAITS if t not in used_traits]
-    if len(avail_t) < 2:
+    if len(avail_t) < 3:
         avail_t = ALL_TRAITS.copy()
-    t2 = random.sample(avail_t, 2)
-    used_traits.update(t2)
-    return SiteReqs(num, attrs, ranges, t2[0], t2[1])
+    t3 = random.sample(avail_t, 3)
+    used_traits.update(t3)
+    return SiteReqs(num, list(FIXED_ATTRIBUTES), ranges, t3[0], t3[1], t3[2])
 
 
 def generate_game():
     global _used_names
     _used_names = set()
-    ua, ut = set(), set()
-    sites = [make_site(i + 1, ua, ut) for i in range(NUM_SITES)]
+    ut = set()
+    sites = [make_site(i + 1, ut) for i in range(NUM_SITES)]
     all_m = {}
     for si, site in enumerate(sites):
+        d, u, n = site.desired_trait, site.undesired_trait, site.neutral_trait
         pool = {
-            "step2": [make_microbe(site.attr_names, site.desired_trait, site.undesired_trait) for _ in range(10)],
-            "step3_given": [make_microbe(site.attr_names, site.desired_trait, site.undesired_trait) for _ in range(6)],
-            "step3_rounds": [[make_microbe(site.attr_names, site.desired_trait, site.undesired_trait) for _ in range(3)] for _ in range(4)],
+            "step2": [make_microbe(d, u, n) for _ in range(10)],
+            "step3_given": [make_microbe(d, u, n) for _ in range(6)],
+            "step3_rounds": [[make_microbe(d, u, n) for _ in range(3)] for _ in range(4)],
         }
         all_m[si] = pool
     return sites, all_m
@@ -192,14 +189,16 @@ def site_box(site: SiteReqs):
             <span style='background:#14532d;color:#86efac;padding:3px 12px;border-radius:6px;
                 font-size:.88em;margin-right:14px;'>✅ Desired: {site.desired_trait}</span>
             <span style='background:#7f1d1d;color:#fca5a5;padding:3px 12px;border-radius:6px;
-                font-size:.88em;'>🚫 Undesired: {site.undesired_trait}</span>
+                font-size:.88em;margin-right:14px;'>🚫 Undesired: {site.undesired_trait}</span>
+            <span style='background:#1e293b;color:#d1d5db;padding:3px 12px;border-radius:6px;
+                font-size:.88em;'>⚪ Neutral: {site.neutral_trait}</span>
         </div></div>"""
 
 
 def next_preview(site: SiteReqs):
-    a = site.attr_names[0]
+    a = random.Random(site.site_num).choice(FIXED_ATTRIBUTES)  # deterministic per site
     lo, hi = site.attr_ranges[a]
-    return f"""<div style="background:#1a1a2e;border:1px dashed #475569;border-radius:10px;
+    return f"""<div style="background:#1a1a2e;border:1px dashed #9ca3af;border-radius:10px;
         padding:10px 14px;margin-top:10px;display:inline-block;">
         <span style="color:#b0b8c4;font-size:.82em;">👁 Next site preview — </span>
         <span style="color:#a5b4fc;font-weight:600;">{a}: {lo}–{hi}</span></div>"""
@@ -425,15 +424,14 @@ Clean **3 ocean sites** by building optimal microbe treatments.
         st.markdown("Choose **2 characteristics** (attributes or traits) to define your preferred microbe profile. "
                     "This helps structure your approach for the next steps.")
 
-        options = site.attr_names + [site.desired_trait, site.undesired_trait]
-        extras = [t for t in ALL_TRAITS if t not in (site.desired_trait, site.undesired_trait)][:2]
-        options += extras
+        # Options: the 3 fixed attributes + the 3 site traits
+        options = list(FIXED_ATTRIBUTES) + [site.desired_trait, site.undesired_trait, site.neutral_trait]
 
         chosen = []
         cols = st.columns(3)
         for i, ch in enumerate(options):
             with cols[i % 3]:
-                is_attr = ch in site.attr_names
+                is_attr = ch in FIXED_ATTRIBUTES
                 lbl = f"📊 {ch}" if is_attr else f"🧪 {ch}"
                 if st.checkbox(lbl, key=f"s1c_{si}_{ch}"):
                     chosen.append(ch)
@@ -441,7 +439,7 @@ Clean **3 ocean sites** by building optimal microbe treatments.
         if len(chosen) > 2:
             st.warning("⚠️ Select exactly 2 characteristics.")
         for ch in chosen[:2]:
-            if ch in site.attr_names:
+            if ch in FIXED_ATTRIBUTES:
                 lo, hi = site.attr_ranges[ch]
                 st.slider(f"Preferred range for **{ch}**", 1, 10, (lo, hi), key=f"s1r_{si}_{ch}")
 
