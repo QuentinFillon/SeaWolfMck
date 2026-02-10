@@ -91,8 +91,10 @@ def make_site(num, used_attrs, used_traits) -> SiteReqs:
     used_attrs.update(attrs)
     ranges = {}
     for a in attrs:
-        lo = random.randint(1, 7)
-        hi = min(lo + random.randint(1, 3), 10)
+        lo = random.randint(1, 8)
+        hi = lo + 2
+        if hi > 10:
+            lo, hi = 8, 10
         ranges[a] = (lo, hi)
     avail_t = [t for t in ALL_TRAITS if t not in used_traits]
     if len(avail_t) < 2:
@@ -161,14 +163,14 @@ def trait_html(t, desired, undesired):
     if t == undesired:
         return f"<span style='background:#7f1d1d;color:#fca5a5;padding:2px 10px;border-radius:6px;'>🚫 {t}</span>"
     if t:
-        return f"<span style='background:#1e293b;color:#94a3b8;padding:2px 10px;border-radius:6px;'>⚪ {t}</span>"
-    return "<span style='color:#475569;font-style:italic;'>no trait</span>"
+        return f"<span style='background:#1e293b;color:#d1d5db;padding:2px 10px;border-radius:6px;'>⚪ {t}</span>"
+    return "<span style='color:#9ca3af;font-style:italic;'>no trait</span>"
 
 
 def card(m: Microbe, site: SiteReqs, border="#334155"):
     attr_spans = "".join(
         f"<span style='margin-right:16px;'>"
-        f"<span style='color:#cbd5e1;'>{a}:</span> "
+        f"<span style='color:#d1d5db;'>{a}:</span> "
         f"<b style='color:{attr_fg(m.attributes[a], *site.attr_ranges[a])};'>{m.attributes[a]}</b>"
         f"</span>"
         for a in site.attr_names
@@ -184,7 +186,7 @@ def card(m: Microbe, site: SiteReqs, border="#334155"):
 def site_box(site: SiteReqs):
     rows = "".join(
         f"<div style='display:inline-block;margin-right:28px;margin-bottom:6px;'>"
-        f"<div style='color:#94a3b8;font-size:.78em;'>📊 {a}</div>"
+        f"<div style='color:#d1d5db;font-size:.78em;'>📊 {a}</div>"
         f"<div style='font-weight:700;font-size:1.15em;color:#f1f5f9;'>{lo} – {hi}</div></div>"
         for a in site.attr_names for lo, hi in [site.attr_ranges[a]]
     )
@@ -206,20 +208,22 @@ def next_preview(site: SiteReqs):
     lo, hi = site.attr_ranges[a]
     return f"""<div style="background:#1a1a2e;border:1px dashed #475569;border-radius:10px;
         padding:10px 14px;margin-top:10px;display:inline-block;">
-        <span style="color:#64748b;font-size:.82em;">👁 Next site preview — </span>
+        <span style="color:#b0b8c4;font-size:.82em;">👁 Next site preview — </span>
         <span style="color:#a5b4fc;font-weight:600;">{a}: {lo}–{hi}</span></div>"""
 
 
 # ─── CSS ───────────────────────────────────────────────────────────────────────
 CSS = """<style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
-.stApp { background:#020617; color:#e2e8f0; }
-h1,h2,h3,h4 { font-family:'Outfit',sans-serif !important; color:#f1f5f9 !important; }
+.stApp { background:#020617; color:#d1d5db; }
+* { color:#d1d5db; }
+h1,h2,h3,h4 { font-family:'Outfit',sans-serif !important; color:#e5e7eb !important; }
+p, li, span, label, td, th, summary { color:#d1d5db !important; }
 .big-title { font-family:'Outfit',sans-serif; font-size:2.6em; font-weight:800; text-align:center;
     background:linear-gradient(135deg,#22d3ee,#3b82f6,#a78bfa);
     -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-.sub { text-align:center; color:#64748b; font-size:1.05em; margin-bottom:18px; }
-.step-badge { display:inline-block; background:#1e40af; color:#dbeafe; padding:5px 16px;
+.sub { text-align:center; color:#9ca3af !important; font-size:1.05em; margin-bottom:18px; }
+.step-badge { display:inline-block; background:#1e40af; color:#dbeafe !important; padding:5px 16px;
     border-radius:8px; font-weight:700; font-size:.95em; }
 .timer-box { font-family:'Outfit',sans-serif; text-align:center; font-size:2.2em;
     font-weight:700; padding:8px; border-radius:12px; }
@@ -229,12 +233,14 @@ h1,h2,h3,h4 { font-family:'Outfit',sans-serif !important; color:#f1f5f9 !importa
 .cat-sec { background:#0f172a; border:1px solid #1e293b; border-radius:10px;
     padding:10px 12px; min-height:60px; }
 .cat-hd { font-weight:700; margin-bottom:4px; font-size:.88em; }
-.cat-it { font-size:.82em; color:#94a3b8; padding:1px 0; }
-/* Better checkbox contrast */
-.stCheckbox label span { color:#e2e8f0 !important; }
-.stCheckbox label { color:#e2e8f0 !important; }
-/* Button text */
+.cat-it { font-size:.82em; color:#d1d5db !important; padding:1px 0; }
+.stCheckbox label span { color:#d1d5db !important; }
+.stCheckbox label { color:#d1d5db !important; }
+.stMarkdown p, .stMarkdown li, .stMarkdown span { color:#d1d5db !important; }
+.stSlider label { color:#d1d5db !important; }
+div[data-testid="stExpander"] summary span { color:#d1d5db !important; }
 div[data-testid="stButton"] button { font-weight:600 !important; }
+div[data-testid="stAlert"] p { color:#1f2937 !important; }
 </style>"""
 
 
@@ -321,23 +327,23 @@ Clean **3 ocean sites** by building optimal microbe treatments.
                  "⚠️ Needs work" if avg >= 40 else "❌ Below threshold")
         st.markdown(f"""<div style="text-align:center;padding:30px;background:#0f172a;
             border:2px solid {gc}40;border-radius:20px;margin-bottom:24px;">
-            <div style="color:#94a3b8;">Overall Effectiveness</div>
+            <div style="color:#d1d5db;">Overall Effectiveness</div>
             <div style="font-family:'Outfit',sans-serif;font-size:4em;font-weight:800;color:{gc};">{avg:.0f}%</div>
             <div style="font-size:1.2em;color:#f1f5f9;">{grade}</div>
-            <div style="color:#64748b;margin-top:6px;">Total: {sum(scores)} / 300</div>
+            <div style="color:#9ca3af;margin-top:6px;">Total: {sum(scores)} / 300</div>
         </div>""", unsafe_allow_html=True)
         cols = st.columns(NUM_SITES)
         for i in range(NUM_SITES):
             sc = scores[i]
             c = "#4ade80" if sc >= 80 else ("#fbbf24" if sc >= 40 else "#f87171")
             with cols[i]:
-                st.markdown(f'<div class="sbox"><div style="color:#94a3b8;font-size:.9em;">Site {i+1}</div>'
+                st.markdown(f'<div class="sbox"><div style="color:#d1d5db;font-size:.9em;">Site {i+1}</div>'
                             f'<div class="snum" style="color:{c};">{sc}%</div></div>', unsafe_allow_html=True)
                 for d in S.site_details.get(i, []):
                     st.markdown(d)
         if S.start_time:
             used = min(time.time() - S.start_time, TOTAL_TIME)
-            st.markdown(f"<div style='text-align:center;color:#64748b;margin-top:16px;'>"
+            st.markdown(f"<div style='text-align:center;color:#9ca3af;margin-top:16px;'>"
                         f"⏱️ Time used: {fmt_time(int(used))} / {fmt_time(TOTAL_TIME)}</div>",
                         unsafe_allow_html=True)
         st.markdown("---")
@@ -375,12 +381,12 @@ Clean **3 ocean sites** by building optimal microbe treatments.
             if idx in S.site_scores:
                 sc = S.site_scores[idx]
                 c = "#4ade80" if sc >= 80 else ("#fbbf24" if sc >= 40 else "#f87171")
-                st.markdown(f'<div class="sbox"><div style="color:#94a3b8;font-size:.78em;">Site {idx+1}</div>'
+                st.markdown(f'<div class="sbox"><div style="color:#d1d5db;font-size:.78em;">Site {idx+1}</div>'
                             f'<div class="snum" style="color:{c};">{sc}%</div></div>', unsafe_allow_html=True)
             else:
                 lbl = "▶ Active" if idx == si else "◻ Pending"
-                st.markdown(f'<div class="sbox"><div style="color:#94a3b8;font-size:.78em;">Site {idx+1}</div>'
-                            f'<div style="color:#475569;margin-top:4px;">{lbl}</div></div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="sbox"><div style="color:#d1d5db;font-size:.78em;">Site {idx+1}</div>'
+                            f'<div style="color:#9ca3af;margin-top:4px;">{lbl}</div></div>', unsafe_allow_html=True)
     with t5:
         step_labels = {"step0": "Step 0 · Review", "step1": "Step 1 · Profile",
                        "step2": "Step 2 · Categorize", "step3": "Step 3 · Prospects",
@@ -519,7 +525,7 @@ Clean **3 ocean sites** by building optimal microbe treatments.
                 st.markdown(f"<div class='cat-it'>{sm.icon} {sm.name}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
         with cc3:
-            st.markdown(f"<div class='cat-sec'><div class='cat-hd' style='color:#64748b;'>"
+            st.markdown(f"<div class='cat-sec'><div class='cat-hd' style='color:#9ca3af;'>"
                         f"🗑️ Rejected ({len(S.s2_rejected[si])})</div>", unsafe_allow_html=True)
             for rm in S.s2_rejected[si]:
                 st.markdown(f"<div class='cat-it'>{rm.icon} {rm.name}</div>", unsafe_allow_html=True)
@@ -582,21 +588,21 @@ Clean **3 ocean sites** by building optimal microbe treatments.
                 c = "#4ade80" if ok else "#f87171"
                 with pcols[ai]:
                     st.markdown(f"<div style='text-align:center;'>"
-                                f"<div style='color:#94a3b8;font-size:.75em;'>Avg {a}</div>"
+                                f"<div style='color:#d1d5db;font-size:.75em;'>Avg {a}</div>"
                                 f"<div style='color:{c};font-weight:700;font-size:1.3em;'>{avg:.1f}</div>"
-                                f"<div style='color:#475569;font-size:.7em;'>target {lo}–{hi}</div></div>",
+                                f"<div style='color:#9ca3af;font-size:.7em;'>target {lo}–{hi}</div></div>",
                                 unsafe_allow_html=True)
             with pcols[-2]:
                 has_d = any(m_.trait == site.desired_trait for m_ in sel_ms)
                 st.markdown(f"<div style='text-align:center;'>"
                             f"<div style='font-size:1.2em;'>{'✅' if has_d else '⚠️'}</div>"
-                            f"<div style='color:#94a3b8;font-size:.7em;'>Desired</div></div>",
+                            f"<div style='color:#d1d5db;font-size:.7em;'>Desired</div></div>",
                             unsafe_allow_html=True)
             with pcols[-1]:
                 has_u = any(m_.trait == site.undesired_trait for m_ in sel_ms)
                 st.markdown(f"<div style='text-align:center;'>"
                             f"<div style='font-size:1.2em;'>{'✅' if not has_u else '🚨'}</div>"
-                            f"<div style='color:#94a3b8;font-size:.7em;'>No undesired</div></div>",
+                            f"<div style='color:#d1d5db;font-size:.7em;'>No undesired</div></div>",
                             unsafe_allow_html=True)
 
         st.markdown("---")
