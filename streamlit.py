@@ -69,16 +69,15 @@ def make_name() -> str:
 
 def make_microbe(attr_names, desired, undesired) -> Microbe:
     attrs = {a: random.randint(1, 10) for a in attr_names}
+    # Every microbe always has exactly 1 trait
+    other = [t for t in ALL_TRAITS if t not in (desired, undesired)]
     r = random.random()
     if r < 0.35:
         trait = desired
     elif r < 0.50:
         trait = undesired
-    elif r < 0.65:
-        other = [t for t in ALL_TRAITS if t not in (desired, undesired)]
-        trait = random.choice(other) if other else ""
     else:
-        trait = ""
+        trait = random.choice(other)
     return Microbe(name=make_name(), icon=random.choice(ICONS),
                    attributes=attrs, trait=trait)
 
@@ -150,11 +149,7 @@ def fmt_time(s):
 
 
 def attr_fg(val, lo, hi):
-    if lo <= val <= hi:
-        return "#4ade80"
-    if abs(val - lo) <= 1 or abs(val - hi) <= 1:
-        return "#fbbf24"
-    return "#f87171"
+    return "#e5e7eb"  # neutral light gray, no hint
 
 
 def trait_html(t, desired, undesired):
@@ -162,9 +157,7 @@ def trait_html(t, desired, undesired):
         return f"<span style='background:#14532d;color:#86efac;padding:2px 10px;border-radius:6px;'>✅ {t}</span>"
     if t == undesired:
         return f"<span style='background:#7f1d1d;color:#fca5a5;padding:2px 10px;border-radius:6px;'>🚫 {t}</span>"
-    if t:
-        return f"<span style='background:#1e293b;color:#d1d5db;padding:2px 10px;border-radius:6px;'>⚪ {t}</span>"
-    return "<span style='color:#9ca3af;font-style:italic;'>no trait</span>"
+    return f"<span style='background:#1e293b;color:#d1d5db;padding:2px 10px;border-radius:6px;'>⚪ {t}</span>"
 
 
 def card(m: Microbe, site: SiteReqs, border="#334155"):
@@ -291,9 +284,6 @@ Clean **3 ocean sites** by building optimal microbe treatments.
 - Attribute avg out of range → **−20 %** each
 - Desired trait missing → **−20 %**
 - Each microbe with undesired trait → **−20 %**
-
-### 🎨 Colour legend
-🟢 In range · 🟡 Close (±1) · 🔴 Far from range
 """)
             st.markdown("")
             if st.button("🚀  Start Game", use_container_width=True, type="primary"):
