@@ -2,16 +2,24 @@
 🌊 Sea Wolf — Ocean Cleanup (McKinsey PSG Simulation)
 Faithful reproduction of the 5-step per-site flow:
   Step 0: Review microbes saved from previous site (Sites 2 & 3 only)
-  Step 1: Build microbe profile (choose 2 characteristics)
+  Step 1: Build microbe profile (choose 2 characteristics out of 8)
   Step 2: Categorize 10 microbes one-by-one (Keep / Save for Next / Reject)
-  Step 3: Build prospect pool (6 given + pick 1-of-3 x 4 rounds = 10)
+  Step 3: Build prospect pool (6 given + pick 1-of-3 × 4 rounds = 10)
   Step 4: Create treatment (pick 3 from 10 prospects)
+
+Based on real game mechanics:
+  - 3 numerical attributes (1-10) with target ranges like 1-3, 4-6, 8-10
+  - 5 binary traits per site (1 desired, 1 undesired, 3 neutral)
+  - Each microbe has exactly 1 trait
+  - 84 total microbes across 3 sites
+  - Scoring: 100% default, -20% per attribute out of range (max -60%),
+    -20% if desired trait missing, -20% per undesired microbe (max -60%)
 """
 
 import streamlit as st
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Set
 
 # ─── CONSTANTS ─────────────────────────────────────────────────────────────────
@@ -19,14 +27,19 @@ TOTAL_TIME = 30 * 60
 NUM_SITES = 3
 PENALTY = 20
 
-# The 3 attributes are ALWAYS the same across all sites — only ranges differ
 FIXED_ATTRIBUTES = ["Permeability", "Mobility", "Energy"]
+
+# Possible attribute ranges (always width-2 intervals)
+POSSIBLE_RANGES = [(1, 3), (2, 4), (3, 5), (4, 6), (5, 7), (6, 8), (7, 9), (8, 10)]
 
 ALL_TRAITS = [
     "Heat-resistant", "Aerobic", "Hydrophilic", "Bioluminescent",
     "Acidophilic", "UV-tolerant", "Phosphorus-removing",
-    "Cryogenic", "Alkaliphilic", "Photosensitive"
+    "Cryogenic", "Alkaliphilic", "Photosensitive",
+    "Thermophilic", "Anaerobic", "Magnetotactic",
+    "Halophilic", "Chemotrophic",
 ]
+
 PREFIXES = ["Cyro", "Ops", "Neo", "Flux", "Zeta", "Axo", "Viro", "Plex",
             "Kino", "Rho", "Sigma", "Tau", "Delta", "Omni", "Hexa", "Tera",
             "Lyso", "Quor", "Myco", "Ecto", "Endo", "Para", "Xeno", "Meso"]
@@ -41,79 +54,125 @@ ICONS = ["🦠", "🧫", "🔬", "💊", "🧬", "⚗️", "🫧", "🌀", "💠
 class Microbe:
     name: str
     icon: str
-    attributes: Dict[str, int]   # always Permeability, Mobility, Energy
-    trait: str                    # exactly 1 trait (desired, undesired, or neutral)
+    attributes: Dict[str, int]   # always Permeability, Mobility, Energy (1-10)
+    trait: str                    # exactly 1 trait
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        return isinstance(other, Microbe) and self.name == other.name
+
 
 @dataclass
 class SiteReqs:
     site_num: int
     attr_names: List[str]                   # always FIXED_ATTRIBUTES
-    attr_ranges: Dict[str, Tuple[int, int]] # different ranges per site
+    attr_ranges: Dict[str, Tuple[int, int]] # e.g. {"Permeability": (4, 6), ...}
     desired_trait: str
     undesired_trait: str
-    neutral_trait: str
+    neutral_traits: List[str]               # 3 neutral traits
+    all_traits: List[str]                   # all 5 traits for this site
 
 
-# ─── GENERATION ────────────────────────────────────────────────────────────────
-_used_names: Set[str] = set()
-
-def make_name() -> str:
-    global _used_names
+# ─── GENERATION (all done once at game start) ─────────────────────────────────
+def _make_name(used_names: Set[str], rng: random.Random) -> str:
     for _ in range(200):
-        n = f"{random.choice(PREFIXES)} {random.choice(SUFFIXES)}"
-        if n not in _used_names:
-            _used_names.add(n)
+        n = f"{rng.choice(PREFIXES)} {rng.choice(SUFFIXES)}"
+        if n not in used_names:
+            used_names.add(n)
             return n
-    return f"M-{random.randint(1000, 9999)}"
+    return f"M-{rng.randint(1000, 9999)}"
 
 
-def make_microbe(desired, undesired, neutral) -> Microbe:
-    attrs = {a: random.randint(1, 10) for a in FIXED_ATTRIBUTES}
-    # Every microbe has exactly 1 trait among the 3 possible for this site
-    r = random.random()
-    if r < 0.35:
+def _make_microbe(used_names: Set[str], rng: random.Random,
+                  site_traits: List[str], desired: str, undesired: str) -> dict:
+    """Create a microbe dict (serializable for session state)."""
+    attrs = {a: rng.randint(1, 10) for a in FIXED_ATTRIBUTES}
+    # Each microbe gets exactly 1 trait from the site's 5 traits
+    r = rng.random()
+    if r < 0.30:
         trait = desired
-    elif r < 0.50:
+    elif r < 0.45:
         trait = undesired
     else:
-        trait = neutral
-    return Microbe(name=make_name(), icon=random.choice(ICONS),
-                   attributes=attrs, trait=trait)
+        trait = rng.choice(site_traits)  # could be any of the 5
+    return {
+        "name": _make_name(used_names, rng),
+        "icon": rng.choice(ICONS),
+        "attributes": attrs,
+        "trait": trait,
+    }
 
 
-def make_site(num, used_traits) -> SiteReqs:
-    # Same 3 attributes always, different ranges per site
+def _make_site(num: int, used_traits: Set[str], rng: random.Random) -> dict:
+    """Create a site requirements dict."""
     ranges = {}
     for a in FIXED_ATTRIBUTES:
-        lo = random.randint(1, 8)
-        hi = lo + 2
-        if hi > 10:
-            lo, hi = 8, 10
-        ranges[a] = (lo, hi)
-    # 3 traits per site: desired, undesired, neutral
+        ranges[a] = rng.choice(POSSIBLE_RANGES)
+
     avail_t = [t for t in ALL_TRAITS if t not in used_traits]
-    if len(avail_t) < 3:
+    if len(avail_t) < 5:
         avail_t = ALL_TRAITS.copy()
-    t3 = random.sample(avail_t, 3)
-    used_traits.update(t3)
-    return SiteReqs(num, list(FIXED_ATTRIBUTES), ranges, t3[0], t3[1], t3[2])
+    t5 = rng.sample(avail_t, 5)
+    used_traits.update(t5)
+    return {
+        "site_num": num,
+        "attr_names": list(FIXED_ATTRIBUTES),
+        "attr_ranges": ranges,
+        "desired_trait": t5[0],
+        "undesired_trait": t5[1],
+        "neutral_traits": t5[2:],
+        "all_traits": t5,
+    }
 
 
-def generate_game():
-    global _used_names
-    _used_names = set()
-    ut = set()
-    sites = [make_site(i + 1, ut) for i in range(NUM_SITES)]
-    all_m = {}
+def generate_game(seed=None):
+    """Generate all sites and all microbes upfront. Returns serializable dicts."""
+    rng = random.Random(seed)
+    used_names: Set[str] = set()
+    used_traits: Set[str] = set()
+
+    sites = [_make_site(i + 1, used_traits, rng) for i in range(NUM_SITES)]
+    all_microbes = {}
+
     for si, site in enumerate(sites):
-        d, u, n = site.desired_trait, site.undesired_trait, site.neutral_trait
+        d = site["desired_trait"]
+        u = site["undesired_trait"]
+        traits = site["all_traits"]
+
         pool = {
-            "step2": [make_microbe(d, u, n) for _ in range(10)],
-            "step3_given": [make_microbe(d, u, n) for _ in range(6)],
-            "step3_rounds": [[make_microbe(d, u, n) for _ in range(3)] for _ in range(4)],
+            "step2": [_make_microbe(used_names, rng, traits, d, u) for _ in range(10)],
+            "step3_given": [_make_microbe(used_names, rng, traits, d, u) for _ in range(6)],
+            "step3_rounds": [
+                [_make_microbe(used_names, rng, traits, d, u) for _ in range(3)]
+                for _ in range(4)
+            ],
         }
-        all_m[si] = pool
-    return sites, all_m
+        all_microbes[si] = pool
+
+    return sites, all_microbes
+
+
+# ─── HELPERS to convert dicts back to dataclasses ─────────────────────────────
+def to_microbe(d: dict) -> Microbe:
+    return Microbe(name=d["name"], icon=d["icon"],
+                   attributes=d["attributes"], trait=d["trait"])
+
+def to_site(d: dict) -> SiteReqs:
+    # Convert attr_ranges values from lists back to tuples if needed
+    ar = {}
+    for k, v in d["attr_ranges"].items():
+        ar[k] = tuple(v) if isinstance(v, list) else v
+    return SiteReqs(
+        site_num=d["site_num"],
+        attr_names=d["attr_names"],
+        attr_ranges=ar,
+        desired_trait=d["desired_trait"],
+        undesired_trait=d["undesired_trait"],
+        neutral_traits=d["neutral_traits"],
+        all_traits=d["all_traits"],
+    )
 
 
 # ─── SCORING ───────────────────────────────────────────────────────────────────
@@ -145,10 +204,6 @@ def fmt_time(s):
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
-def attr_fg(val, lo, hi):
-    return "#e5e7eb"  # neutral light gray, no hint
-
-
 def trait_html(t, desired, undesired):
     if t == desired:
         return f"<span style='background:#14532d;color:#86efac;padding:2px 10px;border-radius:6px;'>✅ {t}</span>"
@@ -161,7 +216,7 @@ def card(m: Microbe, site: SiteReqs, border="#334155"):
     attr_spans = "".join(
         f"<span style='margin-right:16px;'>"
         f"<span style='color:#d1d5db;'>{a}:</span> "
-        f"<b style='color:{attr_fg(m.attributes[a], *site.attr_ranges[a])};'>{m.attributes[a]}</b>"
+        f"<b style='color:#e5e7eb;'>{m.attributes[a]}</b>"
         f"</span>"
         for a in site.attr_names
     )
@@ -190,18 +245,24 @@ def site_box(site: SiteReqs):
                 font-size:.88em;margin-right:14px;'>✅ Desired: {site.desired_trait}</span>
             <span style='background:#7f1d1d;color:#fca5a5;padding:3px 12px;border-radius:6px;
                 font-size:.88em;margin-right:14px;'>🚫 Undesired: {site.undesired_trait}</span>
-            <span style='background:#1e293b;color:#d1d5db;padding:3px 12px;border-radius:6px;
-                font-size:.88em;'>⚪ Neutral: {site.neutral_trait}</span>
         </div></div>"""
 
 
-def next_preview(site: SiteReqs):
-    a = random.Random(site.site_num).choice(FIXED_ATTRIBUTES)  # deterministic per site
-    lo, hi = site.attr_ranges[a]
+def next_site_preview(next_site: SiteReqs):
+    """Show a single attribute hint for the next site (like the real game)."""
+    # Pick one attribute deterministically
+    rng = random.Random(next_site.site_num)
+    a = rng.choice(FIXED_ATTRIBUTES)
+    lo, hi = next_site.attr_ranges[a]
+    # Also show one trait hint (desired or random)
+    show_trait = next_site.desired_trait if rng.random() < 0.5 else next_site.undesired_trait
+    trait_label = "Desired" if show_trait == next_site.desired_trait else "Undesired"
     return f"""<div style="background:#1a1a2e;border:1px dashed #9ca3af;border-radius:10px;
         padding:10px 14px;margin-top:10px;display:inline-block;">
         <span style="color:#b0b8c4;font-size:.82em;">👁 Next site preview — </span>
-        <span style="color:#a5b4fc;font-weight:600;">{a}: {lo}–{hi}</span></div>"""
+        <span style="color:#a5b4fc;font-weight:600;">{a}: {lo}–{hi}</span>
+        <span style="color:#9ca3af;margin-left:14px;font-size:.82em;">{trait_label}: {show_trait}</span>
+    </div>"""
 
 
 # ─── CSS ───────────────────────────────────────────────────────────────────────
@@ -269,25 +330,30 @@ def main():
 ### 🎯 Objective
 Clean **3 ocean sites** by building optimal microbe treatments.
 
+Each site has **3 numerical attributes** (target ranges like 1–3, 4–6, 8–10)
+and **5 binary traits** (1 desired, 1 undesired, 3 neutral).
+
 ### 🔄 Flow per site
 
 | Step | Action |
 |------|--------|
 | **Step 0** *(sites 2–3 only)* | Review microbes saved from the previous site |
-| **Step 1** | Choose 2 profile characteristics |
+| **Step 1** | Choose 2 characteristics from 8 (3 attrs + 5 traits) |
 | **Step 2** | 10 microbes shown **one by one** → Keep · Save for next · Reject |
 | **Step 3** | Prospect pool: 6 given + pick **1 of 3** × 4 rounds = 10 |
 | **Step 4** | Select **3 microbes** from 10 prospects → scored |
 
 ### 📏 Scoring (per site, max 100 %)
-- Attribute avg out of range → **−20 %** each
-- Desired trait missing → **−20 %**
-- Each microbe with undesired trait → **−20 %**
+- Attribute avg out of range → **−20 %** each (max −60 %)
+- Desired trait missing → **−20 %** (max −20 %)
+- Each microbe with undesired trait → **−20 %** each (max −60 %)
 """)
             st.markdown("")
             if st.button("🚀  Start Game", use_container_width=True, type="primary"):
-                sites, microbes = generate_game()
-                S.sites, S.microbes = sites, microbes
+                seed = int(time.time() * 1000) % (2**31)
+                sites, microbes = generate_game(seed)
+                S.sites = sites
+                S.microbes = microbes
                 S.phase = "playing"
                 S.cur_site, S.cur_step = 0, "step1"
                 S.start_time = time.time()
@@ -344,9 +410,10 @@ Clean **3 ocean sites** by building optimal microbe treatments.
     # ══════════════════════════════════════════════════════════════════════════
     #  PLAYING
     # ══════════════════════════════════════════════════════════════════════════
-    sites = S.sites
+    sites_data = S.sites
     si = S.cur_site
-    site = sites[si]
+    site_d = sites_data[si]
+    site = to_site(site_d)
     step = S.cur_step
     elapsed = time.time() - S.start_time
     remaining = max(0, TOTAL_TIME - int(elapsed))
@@ -387,7 +454,7 @@ Clean **3 ocean sites** by building optimal microbe treatments.
     st.markdown(site_box(site), unsafe_allow_html=True)
 
     # ──────────────────────────────────────────────────────────────────────────
-    #  STEP 0
+    #  STEP 0 — Review saved microbes from previous site
     # ──────────────────────────────────────────────────────────────────────────
     if step == "step0":
         prev_saved = S.s2_saved.get(si - 1, [])
@@ -403,12 +470,13 @@ Clean **3 ocean sites** by building optimal microbe treatments.
         st.markdown("### Step 0 — Review Saved Microbes")
         st.markdown(f"These microbes were saved for this site during the previous site's Step 2. "
                     f"**Keep** or **Reject** each one. ({idx + 1} / {len(prev_saved)})")
-        m = prev_saved[idx]
+        m_data = prev_saved[idx]
+        m = to_microbe(m_data)
         st.markdown(card(m, site, "#6366f1"), unsafe_allow_html=True)
         c1, c2, _ = st.columns([1, 1, 2])
         with c1:
             if st.button("✅  Keep for this site", key=f"s0k{idx}", use_container_width=True, type="primary"):
-                S.s2_kept[si].append(m)
+                S.s2_kept[si].append(m_data)
                 S.s0_index += 1
                 st.rerun()
         with c2:
@@ -417,24 +485,39 @@ Clean **3 ocean sites** by building optimal microbe treatments.
                 st.rerun()
 
     # ──────────────────────────────────────────────────────────────────────────
-    #  STEP 1
+    #  STEP 1 — Build microbe profile (choose 2 out of 8 characteristics)
     # ──────────────────────────────────────────────────────────────────────────
     elif step == "step1":
         st.markdown("### Step 1 — Build Microbe Profile")
         st.markdown("Choose **2 characteristics** (attributes or traits) to define your preferred microbe profile. "
                     "This helps structure your approach for the next steps.")
 
-        # Options: the 3 fixed attributes + the 3 site traits
-        options = list(FIXED_ATTRIBUTES) + [site.desired_trait, site.undesired_trait, site.neutral_trait]
+        # 3 attributes + 5 traits = 8 options
+        all_options = list(FIXED_ATTRIBUTES) + site.all_traits
 
         chosen = []
-        cols = st.columns(3)
-        for i, ch in enumerate(options):
-            with cols[i % 3]:
-                is_attr = ch in FIXED_ATTRIBUTES
-                lbl = f"📊 {ch}" if is_attr else f"🧪 {ch}"
-                if st.checkbox(lbl, key=f"s1c_{si}_{ch}"):
-                    chosen.append(ch)
+        # Show attributes first
+        st.markdown("**📊 Numerical Attributes:**")
+        cols_a = st.columns(3)
+        for i, attr in enumerate(FIXED_ATTRIBUTES):
+            with cols_a[i]:
+                lo, hi = site.attr_ranges[attr]
+                if st.checkbox(f"📊 {attr} ({lo}–{hi})", key=f"s1c_{si}_{attr}"):
+                    chosen.append(attr)
+
+        st.markdown("**🧪 Traits:**")
+        cols_t = st.columns(3)
+        for i, tr in enumerate(site.all_traits):
+            with cols_t[i % 3]:
+                # Show if desired/undesired/neutral
+                if tr == site.desired_trait:
+                    label = f"✅ {tr} (Desired)"
+                elif tr == site.undesired_trait:
+                    label = f"🚫 {tr} (Undesired)"
+                else:
+                    label = f"⚪ {tr}"
+                if st.checkbox(label, key=f"s1c_{si}_{tr}"):
+                    chosen.append(tr)
 
         if len(chosen) > 2:
             st.warning("⚠️ Select exactly 2 characteristics.")
@@ -454,7 +537,7 @@ Clean **3 ocean sites** by building optimal microbe treatments.
     #  STEP 2 — Categorize 10 microbes one by one
     # ──────────────────────────────────────────────────────────────────────────
     elif step == "step2":
-        pool = S.microbes[si]["step2"]
+        pool = S.microbes[si]["step2"]  # list of dicts, stable from init
         idx = S.s2_index
 
         st.markdown("### Step 2 — Categorize Microbes")
@@ -467,33 +550,38 @@ Clean **3 ocean sites** by building optimal microbe treatments.
             if st.button("➡️  Continue to Step 3", type="primary", use_container_width=True):
                 S.cur_step = "step3"
                 S.s3_round = 0
+                # Initialize prospect pool with the 6 given microbes (from stable data)
                 S.s3_prospects[si] = list(S.microbes[si]["step3_given"])
                 st.rerun()
         else:
             st.markdown(f"**Microbe {idx + 1} / 10**")
-            m = pool[idx]
+            m_data = pool[idx]
+            m = to_microbe(m_data)
             st.markdown(card(m, site, "#38bdf8"), unsafe_allow_html=True)
 
+            # Show next site preview if not last site
             if si < NUM_SITES - 1:
-                st.markdown(next_preview(sites[si + 1]), unsafe_allow_html=True)
+                next_site = to_site(sites_data[si + 1])
+                st.markdown(next_site_preview(next_site), unsafe_allow_html=True)
 
             c1, c2, c3 = st.columns(3)
             with c1:
-                if st.button("✅  Keep for this site", key=f"s2k{si}_{idx}",
+                if st.button(f"✅  Keep for Site {si + 1}", key=f"s2k{si}_{idx}",
                               use_container_width=True, type="primary"):
-                    S.s2_kept[si].append(m)
+                    S.s2_kept[si].append(m_data)
                     S.s2_index += 1
                     st.rerun()
             with c2:
                 is_last = si >= NUM_SITES - 1
-                if st.button("📦  Save for next site" if not is_last else "📦  N/A (last site)",
-                              key=f"s2s{si}_{idx}", use_container_width=True, disabled=is_last):
-                    S.s2_saved[si].append(m)
+                btn_label = f"📦  Save for Site {si + 2}" if not is_last else "📦  N/A (last site)"
+                if st.button(btn_label, key=f"s2s{si}_{idx}",
+                              use_container_width=True, disabled=is_last):
+                    S.s2_saved[si].append(m_data)
                     S.s2_index += 1
                     st.rerun()
             with c3:
                 if st.button("🗑️  Reject", key=f"s2r{si}_{idx}", use_container_width=True):
-                    S.s2_rejected[si].append(m)
+                    S.s2_rejected[si].append(m_data)
                     S.s2_index += 1
                     st.rerun()
 
@@ -504,19 +592,19 @@ Clean **3 ocean sites** by building optimal microbe treatments.
             st.markdown(f"<div class='cat-sec'><div class='cat-hd' style='color:#4ade80;'>"
                         f"✅ Kept ({len(S.s2_kept[si])})</div>", unsafe_allow_html=True)
             for km in S.s2_kept[si]:
-                st.markdown(f"<div class='cat-it'>{km.icon} {km.name}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='cat-it'>{km['icon']} {km['name']}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
         with cc2:
             st.markdown(f"<div class='cat-sec'><div class='cat-hd' style='color:#a78bfa;'>"
                         f"📦 Saved ({len(S.s2_saved[si])})</div>", unsafe_allow_html=True)
             for sm in S.s2_saved[si]:
-                st.markdown(f"<div class='cat-it'>{sm.icon} {sm.name}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='cat-it'>{sm['icon']} {sm['name']}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
         with cc3:
             st.markdown(f"<div class='cat-sec'><div class='cat-hd' style='color:#9ca3af;'>"
                         f"🗑️ Rejected ({len(S.s2_rejected[si])})</div>", unsafe_allow_html=True)
             for rm in S.s2_rejected[si]:
-                st.markdown(f"<div class='cat-it'>{rm.icon} {rm.name}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='cat-it'>{rm['icon']} {rm['name']}</div>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -532,7 +620,8 @@ Clean **3 ocean sites** by building optimal microbe treatments.
                     f"6 given + pick 1 of 3 in each round.")
 
         with st.expander(f"📋 Current prospects ({len(prospects)})", expanded=False):
-            for p in prospects:
+            for p_data in prospects:
+                p = to_microbe(p_data)
                 st.markdown(card(p, site), unsafe_allow_html=True)
 
         if rnd >= 4:
@@ -545,17 +634,18 @@ Clean **3 ocean sites** by building optimal microbe treatments.
             st.markdown(f"#### Round {rnd + 1} of 4 — Pick 1 of 3")
             cands = rounds_data[rnd]
             cols = st.columns(3)
-            for ci, cand in enumerate(cands):
+            for ci, cand_data in enumerate(cands):
+                cand = to_microbe(cand_data)
                 with cols[ci]:
                     st.markdown(card(cand, site, "#475569"), unsafe_allow_html=True)
                     if st.button(f"✅ Select", key=f"s3p{si}_{rnd}_{ci}",
                                   use_container_width=True, type="primary"):
-                        S.s3_prospects[si].append(cand)
+                        S.s3_prospects[si].append(cand_data)
                         S.s3_round += 1
                         st.rerun()
 
     # ──────────────────────────────────────────────────────────────────────────
-    #  STEP 4 — Create treatment
+    #  STEP 4 — Create treatment (NO live averages until submission)
     # ──────────────────────────────────────────────────────────────────────────
     elif step == "step4":
         prospects = S.s3_prospects[si]
@@ -564,39 +654,16 @@ Clean **3 ocean sites** by building optimal microbe treatments.
         st.markdown("### Step 4 — Create Treatment")
         st.markdown(f"Select **3 microbes** from your prospects to form the treatment.  ({len(sel)} / 3 selected)")
 
-        # Live preview
+        # NO live average preview — user must calculate themselves
         if sel:
-            sel_ms = [prospects[j] for j in sel]
-            pcols = st.columns(len(site.attr_names) + 2)
-            for ai, a in enumerate(site.attr_names):
-                vals = [m_.attributes[a] for m_ in sel_ms]
-                avg = sum(vals) / len(vals)
-                lo, hi = site.attr_ranges[a]
-                ok = lo <= avg <= hi
-                c = "#4ade80" if ok else "#f87171"
-                with pcols[ai]:
-                    st.markdown(f"<div style='text-align:center;'>"
-                                f"<div style='color:#d1d5db;font-size:.75em;'>Avg {a}</div>"
-                                f"<div style='color:{c};font-weight:700;font-size:1.3em;'>{avg:.1f}</div>"
-                                f"<div style='color:#9ca3af;font-size:.7em;'>target {lo}–{hi}</div></div>",
-                                unsafe_allow_html=True)
-            with pcols[-2]:
-                has_d = any(m_.trait == site.desired_trait for m_ in sel_ms)
-                st.markdown(f"<div style='text-align:center;'>"
-                            f"<div style='font-size:1.2em;'>{'✅' if has_d else '⚠️'}</div>"
-                            f"<div style='color:#d1d5db;font-size:.7em;'>Desired</div></div>",
-                            unsafe_allow_html=True)
-            with pcols[-1]:
-                has_u = any(m_.trait == site.undesired_trait for m_ in sel_ms)
-                st.markdown(f"<div style='text-align:center;'>"
-                            f"<div style='font-size:1.2em;'>{'✅' if not has_u else '🚨'}</div>"
-                            f"<div style='color:#d1d5db;font-size:.7em;'>No undesired</div></div>",
-                            unsafe_allow_html=True)
+            sel_names = [to_microbe(prospects[j]).name for j in sel]
+            st.markdown(f"**Selected:** {', '.join(sel_names)}")
 
         st.markdown("---")
 
         col_l, col_r = st.columns(2)
-        for pi, p in enumerate(prospects):
+        for pi, p_data in enumerate(prospects):
+            p = to_microbe(p_data)
             col = col_l if pi < 5 else col_r
             with col:
                 is_sel = pi in sel
@@ -614,25 +681,14 @@ Clean **3 ocean sites** by building optimal microbe treatments.
 
         st.markdown("---")
 
-        # Score preview
         can_submit = len(sel) == 3
-        if can_submit:
-            trio = [prospects[j] for j in sel]
-            prev_score, prev_det = score_treatment(site, trio)
-            sc_c = "#4ade80" if prev_score >= 80 else ("#fbbf24" if prev_score >= 40 else "#f87171")
-            st.markdown(f"<div style='background:#0f172a;border:1px solid #334155;border-radius:12px;"
-                        f"padding:16px;text-align:center;margin-bottom:12px;'>"
-                        f"<div style='font-weight:700;color:{sc_c};font-size:1.5em;'>"
-                        f"Preview: {prev_score}% effectiveness</div></div>", unsafe_allow_html=True)
-            for d in prev_det:
-                st.markdown(d)
-
         if st.button("🔬  Submit Treatment", type="primary",
                       disabled=not can_submit, use_container_width=True):
-            trio = [prospects[j] for j in sel]
+            trio = [to_microbe(prospects[j]) for j in sel]
             score, details = score_treatment(site, trio)
             S.site_scores[si] = score
             S.site_details[si] = details
+
             if si < NUM_SITES - 1:
                 S.cur_site = si + 1
                 S.cur_step = "step0" if S.s2_saved.get(si, []) else "step1"
